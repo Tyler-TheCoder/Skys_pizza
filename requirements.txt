@@ -1,0 +1,16 @@
+altgraph==0.17.5
+appdirs==1.4.4
+argcomplete==3.6.3
+customtkinter==5.2.2
+darkdetect==0.8.0
+importlib_resources==7.1.0
+packaging==26.2
+pillow==12.2.0
+pyinstaller==6.20.0
+pyinstaller-hooks-contrib==2026.5
+python-barcode==0.16.1
+python-escpos==3.1
+PyYAML==6.0.3
+qrcode==8.2
+setuptools==82.0.1
+six==1.17.0
