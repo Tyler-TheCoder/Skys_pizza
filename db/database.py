@@ -6,38 +6,30 @@ class Database:
     """
     Handles all database operations for the pizza restaurant app.
     Manages menu items and orders.
+
+    Order model (v2 — multi-item):
+        orders      — one row per order  (order_id, total_price, timestamp)
+        order_items — one row per pizza  (item_id, order_id FK, pizza_name,
+                                          size, toppings, item_price)
     """
 
     def __init__(self, db_path='db/orders.db'):
-        """
-        Initialize the database connection.
-        If the database doesn't exist, it will be created automatically.
-
-        Args:
-            db_path (str): Path to the SQLite database file
-        """
-        # Create the db directory if it doesn't exist
         os.makedirs(os.path.dirname(db_path), exist_ok=True)
-
-        # Connect to the database
         self.conn = sqlite3.connect(db_path)
-        # Enable returning results as dictionaries instead of tuples
         self.conn.row_factory = sqlite3.Row
         self.cursor = self.conn.cursor()
-
-        # Create tables on initialization
         self.create_tables()
-        # Populate default menu items if the table is empty
         self.populate_default_menu()
+
+    # ── Table creation ────────────────────────────────────────────────────────
 
     def create_tables(self):
         """
-        Create the necessary tables for the application if they don't exist.
-        Tables: menu_items, orders
+        Create all required tables.
+        Tables: menu_items, orders, order_items
         """
 
-        # Table 1: menu_items
-        # Stores available pizzas, their prices per size, and their ingredients
+        # menu_items — unchanged
         self.cursor.execute('''
             CREATE TABLE IF NOT EXISTS menu_items (
                 pizza_id   INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -49,257 +41,240 @@ class Database:
             )
         ''')
 
-        # Table 2: orders
-        # Stores all orders placed by customers
-        # Note: toppings are the extras added on top of the original pizza
+        # orders — one row per customer order
+        # total_price is the sum of all order_items.item_price
         self.cursor.execute('''
             CREATE TABLE IF NOT EXISTS orders (
                 order_id    INTEGER PRIMARY KEY AUTOINCREMENT,
-                pizza_name  TEXT    NOT NULL,
-                size        TEXT    NOT NULL,
-                toppings    TEXT,
-                final_price REAL    NOT NULL,
+                total_price REAL    NOT NULL DEFAULT 0,
                 timestamp   DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+
+        # order_items — one row per pizza line inside an order
+        # toppings is a comma-separated string, empty string means no extras
+        self.cursor.execute('''
+            CREATE TABLE IF NOT EXISTS order_items (
+                item_id    INTEGER PRIMARY KEY AUTOINCREMENT,
+                order_id   INTEGER NOT NULL REFERENCES orders(order_id),
+                pizza_name TEXT    NOT NULL,
+                size       TEXT    NOT NULL,
+                toppings   TEXT    NOT NULL DEFAULT '',
+                item_price REAL    NOT NULL
             )
         ''')
 
         self.conn.commit()
 
+    # ── Menu ──────────────────────────────────────────────────────────────────
+
     def populate_default_menu(self):
-        """
-        Add default pizza items to the menu if the table is empty.
-        This runs only once when the app starts for the first time.
-        """
-        # Check if menu is empty
         self.cursor.execute('SELECT COUNT(*) FROM menu_items')
-        count = self.cursor.fetchone()[0]
-
-        # If menu is empty, add default items
-        if count == 0:
+        if self.cursor.fetchone()[0] == 0:
             default_pizzas = [
-                ('Margeurite', 450,  1200, 'Sauce tomate, mozzarella'),
-                ('Viande',     600,  1600, 'Sauce tomate, mozzarella, viande hachee'),
-                ('Poulet',     600,  1600, 'Sauce tomate, mozzarella, poulet'),
-                ('Vegetarienne',600, 1600, 'Sauce tomate, mozzarella, poivrons, champignons, olives'),
-                ('Skys',       900,  2700, 'Sauce tomate, mozzarella, 4 fromages, jambon, viande'),
-                ('Mix',        700,  2000, 'Sauce tomate, mozzarella, viande, poulet, legumes'),
+                ('Margeurite',   450,  1200, 'Sauce tomate, mozzarella'),
+                ('Viande',       600,  1600, 'Sauce tomate, mozzarella, viande hachee'),
+                ('Poulet',       600,  1600, 'Sauce tomate, mozzarella, poulet'),
+                ('Vegetarienne', 600,  1600, 'Sauce tomate, mozzarella, poivrons, champignons, olives'),
+                ('Skys',         900,  2700, 'Sauce tomate, mozzarella, 4 fromages, jambon, viande'),
+                ('Mix',          700,  2000, 'Sauce tomate, mozzarella, viande, poulet, legumes'),
             ]
-
             for name, price, mg_price, ingrediants in default_pizzas:
                 self.cursor.execute('''
                     INSERT INTO menu_items (name, base_price, mega_price, ingrediants)
                     VALUES (?, ?, ?, ?)
                 ''', (name, price, mg_price, ingrediants))
-
             self.conn.commit()
 
     def get_menu_items(self):
-        """
-        Retrieve all active menu items from the database.
-
-        Returns:
-            list: List of dictionaries containing pizza details
-                  Example: [{'pizza_id': 1, 'name': 'Margeurite', 'base_price': 450.0,
-                              'mega_price': 1200.0, 'ingrediants': 'Sauce tomate, mozzarella'}, ...]
-        """
         self.cursor.execute('''
             SELECT pizza_id, name, base_price, mega_price, ingrediants
-            FROM menu_items
-            WHERE is_active = 1
-            ORDER BY name
+            FROM menu_items WHERE is_active = 1 ORDER BY name
         ''')
-
-        # Convert sqlite3.Row objects to dictionaries
         return [dict(row) for row in self.cursor.fetchall()]
 
     def get_pizza_by_id(self, pizza_id):
-        """
-        Retrieve a single pizza by its ID.
-
-        Args:
-            pizza_id (int): The ID of the pizza
-
-        Returns:
-            dict: Pizza details or None if not found
-        """
         self.cursor.execute('''
             SELECT pizza_id, name, base_price, mega_price, ingrediants
-            FROM menu_items
-            WHERE pizza_id = ? AND is_active = 1
+            FROM menu_items WHERE pizza_id = ? AND is_active = 1
         ''', (pizza_id,))
-
         row = self.cursor.fetchone()
         return dict(row) if row else None
 
-    def save_order(self, pizza_name, size, toppings, final_price):
+    # ── Order creation ────────────────────────────────────────────────────────
+
+    def create_order(self, items: list[dict]) -> int:
         """
-        Save a new order to the database.
+        Save a full multi-item order in one transaction.
 
         Args:
-            pizza_name  (str):   Name of the pizza (e.g., 'Margeurite')
-            size        (str):   Size of the pizza ('Normale' or 'Mega')
-            toppings    (str):   Comma-separated extras added on top (e.g., 'jambon, olives')
-                                 Pass an empty string if no toppings were added.
-            final_price (float): Final calculated price
+            items: list of dicts, each with keys:
+                   pizza_name (str), size (str),
+                   toppings   (str, comma-separated, may be ''),
+                   item_price (float)
 
         Returns:
-            int: The order_id of the newly created order
+            order_id (int) of the newly created order
+
+        Example:
+            items = [
+                {'pizza_name': 'Skys',  'size': 'Mega',    'toppings': 'Extra fromage', 'item_price': 2750},
+                {'pizza_name': 'Mix',   'size': 'Normale', 'toppings': '',              'item_price': 700},
+            ]
+            order_id = db.create_order(items)
         """
+        if not items:
+            raise ValueError("Cannot create an order with no items.")
+
+        total_price = sum(i['item_price'] for i in items)
+        local_now   = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+        # Insert the order header
         self.cursor.execute('''
-            INSERT INTO orders (pizza_name, size, toppings, final_price)
-            VALUES (?, ?, ?, ?)
-        ''', (pizza_name, size, toppings, final_price))
+            INSERT INTO orders (total_price, timestamp) VALUES (?, ?)
+        ''', (total_price, local_now))
+        order_id = self.cursor.lastrowid
+
+        # Insert each pizza line
+        for item in items:
+            self.cursor.execute('''
+                INSERT INTO order_items (order_id, pizza_name, size, toppings, item_price)
+                VALUES (?, ?, ?, ?, ?)
+            ''', (
+                order_id,
+                item['pizza_name'],
+                item['size'],
+                item.get('toppings', ''),
+                item['item_price'],
+            ))
 
         self.conn.commit()
+        return order_id
 
-        # Return the ID of the newly inserted order
-        return self.cursor.lastrowid
+    # ── Order retrieval ───────────────────────────────────────────────────────
 
-    def get_order_by_id(self, order_id):
+    def get_order_by_id(self, order_id: int) -> dict | None:
         """
-        Retrieve a specific order by its ID.
-        Used for printing the order to the kitchen or for the customer receipt.
-
-        Args:
-            order_id (int): The order ID to fetch
+        Retrieve a full order with all its items.
 
         Returns:
-            dict: Order details or None if not found
-                  Example: {'order_id': 1, 'pizza_name': 'Margeurite',
-                             'size': 'Mega', 'toppings': 'jambon', ...}
+            {
+                'order_id':    1,
+                'total_price': 3450.0,
+                'timestamp':   '2026-05-24 14:30:00',
+                'items': [
+                    {'item_id': 1, 'pizza_name': 'Skys', 'size': 'Mega',
+                     'toppings': 'Extra fromage', 'item_price': 2750.0},
+                    ...
+                ]
+            }
+            or None if not found.
         """
         self.cursor.execute('''
-            SELECT order_id, pizza_name, size, toppings, final_price, timestamp
-            FROM orders
-            WHERE order_id = ?
+            SELECT order_id, total_price, timestamp
+            FROM orders WHERE order_id = ?
         ''', (order_id,))
-
         row = self.cursor.fetchone()
-        return dict(row) if row else None
+        if not row:
+            return None
 
-    def get_all_orders(self):
+        order = dict(row)
+        order['items'] = self._get_items_for_order(order_id)
+        return order
+
+    def get_all_orders(self) -> list[dict]:
         """
-        Retrieve all orders from the database (most recent first).
+        Retrieve all orders with their items (most recent first).
 
         Returns:
-            list: List of dictionaries containing all orders
+            list of order dicts (same structure as get_order_by_id)
         """
         self.cursor.execute('''
-            SELECT order_id, pizza_name, size, toppings, final_price, timestamp
-            FROM orders
-            ORDER BY timestamp DESC
+            SELECT order_id, total_price, timestamp
+            FROM orders ORDER BY timestamp DESC
         ''')
+        orders = [dict(row) for row in self.cursor.fetchall()]
+        for order in orders:
+            order['items'] = self._get_items_for_order(order['order_id'])
+        return orders
 
+    def _get_items_for_order(self, order_id: int) -> list[dict]:
+        """Return all order_items rows for a given order."""
+        self.cursor.execute('''
+            SELECT item_id, pizza_name, size, toppings, item_price
+            FROM order_items WHERE order_id = ? ORDER BY item_id
+        ''', (order_id,))
         return [dict(row) for row in self.cursor.fetchall()]
 
-    def get_monthly_orders(self, month, year):
-        """
-        Retrieve all orders from a specific month.
-        Used for generating diagrams and restaurant statistics.
+    # ── Analytics ─────────────────────────────────────────────────────────────
 
-        Args:
-            month (int): Month number (1-12)
-            year  (int): Year (e.g., 2026)
-
-        Returns:
-            list: List of orders from that month
-        """
+    def get_monthly_orders(self, month: int, year: int) -> list[dict]:
         self.cursor.execute('''
-            SELECT order_id, pizza_name, size, toppings, final_price, timestamp
-            FROM orders
-            WHERE strftime('%m', timestamp) = ? AND strftime('%Y', timestamp) = ?
+            SELECT order_id, total_price, timestamp FROM orders
+            WHERE strftime('%m', timestamp) = ?
+              AND strftime('%Y', timestamp) = ?
             ORDER BY timestamp DESC
         ''', (str(month).zfill(2), str(year)))
+        orders = [dict(row) for row in self.cursor.fetchall()]
+        for order in orders:
+            order['items'] = self._get_items_for_order(order['order_id'])
+        return orders
 
-        return [dict(row) for row in self.cursor.fetchall()]
-
-    def get_monthly_revenue(self, month, year):
-        """
-        Calculate total revenue for a specific month.
-
-        Args:
-            month (int): Month number (1-12)
-            year  (int): Year (e.g., 2026)
-
-        Returns:
-            float: Total revenue for that month
-        """
+    def get_monthly_revenue(self, month: int, year: int) -> float:
         self.cursor.execute('''
-            SELECT SUM(final_price) as total
-            FROM orders
-            WHERE strftime('%m', timestamp) = ? AND strftime('%Y', timestamp) = ?
+            SELECT SUM(total_price) FROM orders
+            WHERE strftime('%m', timestamp) = ?
+              AND strftime('%Y', timestamp) = ?
         ''', (str(month).zfill(2), str(year)))
-
         result = self.cursor.fetchone()[0]
         return result if result else 0.0
 
-    def get_yearly_revenue(self, year):
-        """
-        Calculate total revenue for an entire year.
-
-        Args:
-            year (int): Year (e.g., 2026)
-
-        Returns:
-            float: Total revenue for that year
-        """
+    def get_yearly_revenue(self, year: int) -> float:
         self.cursor.execute('''
-            SELECT SUM(final_price) as total
-            FROM orders
+            SELECT SUM(total_price) FROM orders
             WHERE strftime('%Y', timestamp) = ?
         ''', (str(year),))
-
         result = self.cursor.fetchone()[0]
         return result if result else 0.0
 
-    def get_popular_pizzas(self, limit=5):
-        """
-        Get the most ordered pizzas.
-        Useful for business analytics.
-
-        Args:
-            limit (int): Number of top pizzas to return
-
-        Returns:
-            list: List of dictionaries with pizza names and order counts
-                  Example: [{'pizza_name': 'Margeurite', 'count': 15}, ...]
-        """
+    def get_popular_pizzas(self, limit: int = 5) -> list[dict]:
+        """Most ordered pizzas (counts individual items, not orders)."""
         self.cursor.execute('''
             SELECT pizza_name, COUNT(*) as count
-            FROM orders
+            FROM order_items
             GROUP BY pizza_name
             ORDER BY count DESC
             LIMIT ?
         ''', (limit,))
-
         return [dict(row) for row in self.cursor.fetchall()]
 
+    # ── Shutdown ──────────────────────────────────────────────────────────────
+
     def close(self):
-        """
-        Close the database connection.
-        Call this when shutting down the app.
-        """
         self.conn.close()
 
 
-# Quick test — run with: python db/database.py
+# ── Quick test ────────────────────────────────────────────────────────────────
 if __name__ == '__main__':
+    import os
+    os.makedirs('db', exist_ok=True)
     db = Database()
 
-    print("Menu items:")
-    for item in db.get_menu_items():
-        print(f"  {item['name']} | Normale: {item['base_price']} DA | Mega: {item['mega_price']} DA")
-        print(f"    Ingredients: {item['ingrediants']}")
+    print("Menu:")
+    for p in db.get_menu_items():
+        print(f"  {p['name']}  N:{p['base_price']}  M:{p['mega_price']}")
 
-    print("\nSaving test order...")
-    order_id = db.save_order('Margeurite', 'Mega', 'jambon, olives', 1300.0)
-    print(f"Order saved with ID: {order_id}")
+    print("\nCreating multi-item order...")
+    oid = db.create_order([
+        {'pizza_name': 'Skys',       'size': 'Mega',    'toppings': 'Extra fromage', 'item_price': 2750},
+        {'pizza_name': 'Margeurite', 'size': 'Normale', 'toppings': '',              'item_price': 450},
+    ])
+    print(f"Order #{oid} saved.")
 
-    print("\nRetrieving order:")
-    order = db.get_order_by_id(order_id)
-    print(f"  Pizza   : {order['pizza_name']}")
-    print(f"  Size    : {order['size']}")
-    print(f"  Toppings: {order['toppings']}")
-    print(f"  Price   : {order['final_price']} DA")
+    order = db.get_order_by_id(oid)
+    print(f"Total: {order['total_price']} DA")
+    for item in order['items']:
+        top = f" + {item['toppings']}" if item['toppings'] else ''
+        print(f"  • {item['pizza_name']} ({item['size']}){top}  → {item['item_price']} DA")
 
     db.close()

@@ -1,6 +1,7 @@
 import customtkinter as ctk
 from db.database import Database
 from ui.menu_panel import MenuPanel
+from ui.history_panel import HistoryPanel
 
 
 # ── Brand colors ─────────────────────────────────────────────────────────────
@@ -358,7 +359,6 @@ class OrderScreen:
             # All frames share the same grid cell
             frame.grid(row=0, column=0, sticky="nsew")
             frame.grid_columnconfigure(0, weight=1)
-            frame.grid_rowconfigure(0, weight=1)
             self.pages[key] = frame
 
         # ── Create Order: load the real MenuPanel ────────────────────────────
@@ -367,12 +367,21 @@ class OrderScreen:
             db           = self.db,
             order_screen = self,
         )
+        self._bind_mousewheel(self.menu_panel.left_scroll)
+        self._bind_mousewheel(self.menu_panel.cart_scroll)
+
+        # ── History: load the real HistoryPanel ──────────────────────────────
+        self.history_panel = HistoryPanel(
+            parent_frame = self.pages["history"],
+            db           = self.db,
+            order_screen = self,
+        )
+        self._bind_mousewheel(self.history_panel.scroll)
 
         # ── Other pages: placeholders until their modules are built ──────────
         placeholder_text = {
             "pizzas":      "🍕  Pizza Manager — coming soon",
             "supplements": "🥗  Supplements Manager — coming soon",
-            "history":     "🕐  Order History — coming soon",
             "statistics":  "📈  Statistics — coming soon",
         }
         for key, text in placeholder_text.items():
@@ -382,6 +391,34 @@ class OrderScreen:
                 font=ctk.CTkFont(size=16),
                 text_color=TEXT_MUTED,
             ).grid(row=0, column=0)
+
+    def _bind_mousewheel(self, scrollable_frame: ctk.CTkScrollableFrame):
+        """
+        Recursively bind mousewheel/touchpad scroll events to every widget
+        inside a CTkScrollableFrame so scrolling works anywhere, not just
+        on the scrollbar itself.
+        Call this after building a panel, and again after any dynamic rebuild
+        (e.g. after _refresh() repopulates cards).
+        """
+        canvas = scrollable_frame._parent_canvas
+
+        def _on_mousewheel(event):
+            canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+
+        def _on_linux_scroll(event):
+            if event.num == 4:
+                canvas.yview_scroll(-1, "units")
+            elif event.num == 5:
+                canvas.yview_scroll(1, "units")
+
+        def _bind_recursive(widget):
+            widget.bind("<MouseWheel>", _on_mousewheel,   add="+")
+            widget.bind("<Button-4>",   _on_linux_scroll, add="+")
+            widget.bind("<Button-5>",   _on_linux_scroll, add="+")
+            for child in widget.winfo_children():
+                _bind_recursive(child)
+
+        _bind_recursive(scrollable_frame)
 
     def _show_page(self, page_key: str):
         """
