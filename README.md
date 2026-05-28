@@ -1,7 +1,7 @@
-# Skys_pizza
+# Skys Pizza
 **Pizza Restaurant Order App**
 
-A simple Windows desktop application for managing pizza orders in a restaurant. The app runs on the reception desk, allows staff to create orders, calculates prices, sends orders to the kitchen printer, and maintains order history for customer receipts.
+A desktop application for managing pizza orders in a restaurant. Staff can create multi-item orders, calculate prices, send orders to the kitchen printer, and view order history — all through a modern GUI.
 
 ---
 
@@ -9,17 +9,18 @@ A simple Windows desktop application for managing pizza orders in a restaurant. 
 
 ### What This App Does
 
-1. **Order Creation** — Reception staff select pizza type, add ingredients, choose size
-2. **Price Calculation** — App automatically calculates final price (base price + ingredient costs + size multiplier)
-3. **Kitchen Printing** — Orders are sent to a thermal printer in the kitchen
-4. **Order History** — All orders are saved in a local database for later reference (customer receipts, statistics)
-5. **Analytics** (future) — Monthly revenue charts and restaurant performance diagrams
+1. **Order Creation** — Select pizzas, choose size (Normale/Mega), add toppings, build a cart of multiple items
+2. **Price Calculation** — Auto-calculates total (base/mega price + topping costs)
+3. **Cart Management** — Review and modify the order before sending (add/remove items)
+4. **Kitchen Printing** — Orders are sent to a thermal printer
+5. **Order History** — Searchable history panel with order cards showing items, prices, and timestamps
+6. **Analytics** (future) — Monthly revenue charts and popularity diagrams
 
 ### Who Uses It
 
 - **Reception staff** — Creates orders, manages printing
 - **Kitchen staff** — Receives printed orders from the thermal printer
-- **Manager** — Views statistics and daily/monthly reports
+- **Manager** — Views history and reports
 
 ---
 
@@ -28,49 +29,40 @@ A simple Windows desktop application for managing pizza orders in a restaurant. 
 | Component | Technology | Purpose |
 |-----------|-----------|---------|
 | **Language** | Python 3.10+ | App logic and scripting |
-| **UI Framework** | CustomTkinter | Modern, easy-to-maintain interface |
+| **UI Framework** | CustomTkinter | Modern, cross-platform interface |
 | **Database** | SQLite | Local order and menu storage |
 | **Printer Communication** | python-escpos | Sends print commands to thermal printer |
-| **Packaging** | PyInstaller | Converts app to standalone .exe |
-
-### Why These Choices?
-
-- **Simple and stable** — No complex dependencies, minimal external services
-- **Offline-first** — Works without internet, no server required
-- **Single-machine** — Everything runs locally on the reception PC
-- **Low maintenance** — All libraries are well-documented and battle-tested
-- **Easy to extend** — Clean separation of concerns (UI, Database, Printer)
+| **Packaging** | PyInstaller | Converts app to standalone executable |
 
 ---
 
 ## Project Structure
 
 ```
-pizza_app/
+Skys/
 │
-├── main.py                  # Entry point - launches the application
-├── requirements.txt         # Python dependencies (pip install -r requirements.txt)
-├── README.md               # This file
+├── main.py                  # Entry point — launches the application
+├── requirements.txt         # Python dependencies
+├── README.md                # This file
 │
-├── ui/                     # User Interface Layer
-│   ├── order_screen.py     # Main ordering interface (pizza selection, ingredients, size)
-│   └── menu_panel.py       # Menu display and pizza category management
+├── ui/                      # User Interface Layer
+│   ├── order_screen.py      # Main layout: sidebar, topbar, content area, navigation
+│   ├── menu_panel.py        # "Create Order" page — pizza grid, size, toppings, cart
+│   └── history_panel.py     # "History" page — searchable order history with cards
 │
-├── db/                     # Database Layer
-│   ├── database.py         # SQLite operations (queries, inserts, updates)
-│   └── orders.db           # Database file (auto-generated on first run)
+├── db/                      # Database Layer
+│   ├── database.py          # SQLite operations (v2 multi-item schema)
+│   └── orders.db            # Database file (auto-generated on first run)
 │
-└── printer/                # Printer Communication Layer
-    └── printer.py          # ESC/POS commands for thermal printer
+└── printer/                 # Printer Communication Layer
+    └── printer.py           # ESC/POS commands for thermal printer
 ```
 
 ### Folder Responsibilities
 
-- **`ui/`** — Anything the user sees and clicks on. If menu display changes, edit here.
-- **`db/`** — All database queries and data persistence. If order schema changes, edit here.
-- **`printer/`** — All printer communication. If printer format changes, edit here.
-
-This separation keeps the code clean and maintainable.
+- **`ui/`** — Anything the user sees and clicks on. New pages, tabs, or panels go here.
+- **`db/`** — All database queries and data persistence. Schema changes happen here.
+- **`printer/`** — All printer communication. Receipt format changes happen here.
 
 ---
 
@@ -80,13 +72,12 @@ This separation keeps the code clean and maintainable.
 
 ```bash
 git clone <repository-url>
-cd pizza_app
+cd Skys
 ```
 
 ### 2. Create Virtual Environment
 
 ```bash
-# Create virtual environment
 python -m venv venv
 
 # Activate it (Windows)
@@ -119,18 +110,20 @@ The app will:
 
 ### `main.py`
 
-Entry point. Initializes the database and launches the UI.
+Entry point. Sets the CustomTkinter theme, initializes the database, and launches the main window.
 
 ```python
-from ui.order_screen import OrderScreen
+import customtkinter as ctk
 from db.database import Database
+from ui.order_screen import OrderScreen
 
-# Initialize database
 db = Database()
+root = ctk.CTk()
+root.title("Pizza House — Reception")
+root.geometry("1100x650")
 
-# Create and display main window
-app = OrderScreen(db)
-app.run()
+app = OrderScreen(root, db)
+root.mainloop()
 ```
 
 **What to do here:** Only touch this if you're changing how the app starts.
@@ -139,57 +132,68 @@ app.run()
 
 ### `db/database.py`
 
-Handles all database operations. Every query to the database goes through this file.
+Handles all database operations using a **v2 multi-item schema**:
+
+- **`orders`** — one row per customer order (`order_id`, `total_price`, `timestamp`)
+- **`order_items`** — one row per pizza in an order (`item_id`, `order_id` FK, `pizza_name`, `size`, `toppings`, `item_price`)
+- **`menu_items`** — pizza catalog (`pizza_id`, `name`, `base_price`, `mega_price`, `ingrediants`, `is_active`)
 
 **Key functions:**
 
-- `get_menu_items()` — Returns all available pizzas
-- `save_order(pizza_name, size, ingredients, final_price)` — Saves a new order
-- `get_order_by_id(order_id)` — Fetches a specific order (for printing)
-- `get_monthly_orders(month, year)` — Gets orders from a specific month (for analytics)
-- `get_monthly_revenue(month, year)` — Calculates monthly sales
-- `get_popular_pizzas()` — Returns most-ordered pizzas
-
-**What to do here:** Add new queries if you need different data from the database.
+- `get_menu_items()` — Returns all active pizzas
+- `get_pizza_by_id(pizza_id)` — Returns a single pizza
+- `create_order(items)` — Saves a multi-item order in one transaction
+- `get_order_by_id(order_id)` — Fetches a specific order with its items
+- `get_all_orders()` — Returns all orders (most recent first) with their items
+- `get_monthly_orders(month, year)` — Orders for a given month
+- `get_monthly_revenue(month, year)` — Monthly sales total
+- `get_yearly_revenue(year)` — Yearly sales total
+- `get_popular_pizzas(limit=5)` — Most-ordered pizzas
 
 ---
 
 ### `ui/order_screen.py`
 
-Main window where reception staff create orders.
+Main application window with a three-zone layout:
 
-**Responsibilities:**
-- Display menu items
-- Let users select pizza, ingredients, size
-- Calculate price in real-time
-- Send order to printer
-- Show order confirmation
+- **Left sidebar** — Navigation (Menu / Admin sections) with a logo and settings button
+- **Top bar** — Section-aware tabs that change based on the active sidebar section
+- **Content area** — Swappable page frames, each hosting a panel module
 
-**What to do here:** If the UI needs a new button, field, or layout change, edit here.
+Handles navigation switching, tab styling, the pending orders badge, and mousewheel scroll binding.
 
 ---
 
 ### `ui/menu_panel.py`
 
-Displays available pizzas and their categories.
+The **"Create Order"** page with a two-column layout:
 
-**Responsibilities:**
-- Load menu from database
-- Display pizzas organized by category (Classic, Special, etc.)
-- Handle pizza selection
+**Left column (pizza selection):**
+1. Pizza grid — selectable cards showing name, ingredients, and prices
+2. Size selector — Normale or Mega (each with its own price)
+3. Toppings list — optional extras with individual prices
+4. "Add to order" button — adds the configured pizza to the cart
 
-**What to do here:** If menu display changes, edit here.
+**Right column (cart):**
+- Scrollable list of cart items (each with pizza name, size, toppings, price, and a × remove button)
+- Running total
+- "Send to kitchen" button — saves the order and clears the cart
+
+---
+
+### `ui/history_panel.py`
+
+The **"History"** page showing all past orders as cards. Each card displays:
+- Order number, timestamp, item count, and total price
+- Individual pizza lines with name, size, toppings, and item price
+
+Includes a **search bar** to filter orders by pizza name, order number, or date.
 
 ---
 
 ### `printer/printer.py`
 
-Communicates with the thermal printer in the kitchen using ESC/POS commands.
-
-**Responsibilities:**
-- Format order data for printing
-- Send print commands to the printer
-- Handle printer errors
+Communicates with the thermal printer using ESC/POS commands.
 
 **What to do here:** If the receipt format changes or if the printer model changes, edit here.
 
@@ -199,31 +203,37 @@ Communicates with the thermal printer in the kitchen using ESC/POS commands.
 
 ### `menu_items` Table
 
-Stores available pizzas.
-
 ```sql
 CREATE TABLE menu_items (
-    pizza_id INTEGER PRIMARY KEY,
-    name TEXT NOT NULL,              -- e.g., "Margherita"
-    base_price REAL NOT NULL,        -- e.g., 8.00
-    category TEXT NOT NULL,          -- e.g., "Classic", "Special"
-    is_active BOOLEAN DEFAULT 1      -- Enable/disable menu items
+    pizza_id   INTEGER PRIMARY KEY AUTOINCREMENT,
+    name       TEXT    NOT NULL UNIQUE,
+    base_price REAL    NOT NULL,
+    mega_price REAL    NOT NULL,
+    ingrediants TEXT  NOT NULL,
+    is_active  BOOLEAN DEFAULT 1
 )
 ```
 
 ### `orders` Table
 
-Stores all customer orders.
-
 ```sql
 CREATE TABLE orders (
-    order_id INTEGER PRIMARY KEY,
-    pizza_name TEXT NOT NULL,        -- e.g., "Custom" or "Margherita"
-    size TEXT NOT NULL,              -- "Small", "Medium", "Large"
-    ingredients TEXT NOT NULL,       -- Comma-separated: "cheese,ham,onion"
-    final_price REAL NOT NULL,       -- After size multiplier
-    timestamp DATETIME,              -- When order was created
-    status TEXT DEFAULT 'Pending'    -- "Pending", "Printed", "Completed"
+    order_id    INTEGER PRIMARY KEY AUTOINCREMENT,
+    total_price REAL    NOT NULL DEFAULT 0,
+    timestamp   DATETIME DEFAULT CURRENT_TIMESTAMP
+)
+```
+
+### `order_items` Table
+
+```sql
+CREATE TABLE order_items (
+    item_id    INTEGER PRIMARY KEY AUTOINCREMENT,
+    order_id   INTEGER NOT NULL REFERENCES orders(order_id),
+    pizza_name TEXT    NOT NULL,
+    size       TEXT    NOT NULL,
+    toppings   TEXT    NOT NULL DEFAULT '',
+    item_price REAL    NOT NULL
 )
 ```
 
@@ -231,29 +241,22 @@ CREATE TABLE orders (
 
 ## Workflow
 
-### Creating an Order (What the Reception Guy Does)
+### Creating an Order
 
-1. Opens the app → sees the menu
-2. Clicks on "Margherita" → ingredient selection screen appears
-3. Selects ingredients (or leaves as default)
-4. Chooses size: Small (1x), Medium (1.2x), Large (1.5x)
-5. App calculates: $8.00 base × 1.5 (Large) = $12.00
-6. Clicks "Create Order" → Order saved to database
-7. Receipt prints to kitchen → Order appears on receipt printer
+1. Open the app — the "Create Order" page is shown by default
+2. Click a pizza card (e.g. "Skys") — see ingredients and prices for Normale/Mega
+3. Select a size — price updates automatically
+4. Add optional toppings (Extra fromage, Jambon, etc.)
+5. Click **"+ Add to order"** — the item appears in the cart on the right
+6. Repeat for additional pizzas
+7. Review the cart — use the × button to remove items if needed
+8. Click **"🖨 Send to kitchen"** — order saved to database, cart clears, badge updates
 
-### What Happens Behind the Scenes
+### Viewing History
 
-```
-Reception Guy clicks "Create Order"
-        ↓
-order_screen.py validates input
-        ↓
-database.py saves to orders.db
-        ↓
-printer.py formats and prints
-        ↓
-Kitchen receives printed receipt
-```
+1. Click the **"📊 Admin"** sidebar button
+2. Click the **"🕐 History"** tab
+3. Browse orders as cards — search by name, order number, or date
 
 ---
 
@@ -265,83 +268,44 @@ Edit `db/database.py`, in the `populate_default_menu()` function:
 
 ```python
 default_pizzas = [
-    ('Margherita', 8.00, 'Classic'),
-    ('Pepperoni', 9.00, 'Classic'),
-    ('Hawaiian', 10.00, 'Special'),
-    ('Vegetarian', 8.50, 'Special'),
-    ('YOUR_NEW_PIZZA', 11.00, 'Special'),  # ← Add here
+    ('Margeurite',   450,  1200, 'Sauce tomate, mozzarella'),
+    ('Viande',       600,  1600, 'Sauce tomate, mozzarella, viande hachee'),
+    ('YOUR_PIZZA',   700,  1800, 'Your ingredients here'),  # ← Add here
 ]
 ```
 
-Then the database will auto-create it on the next app restart.
-
----
+Columns: `(name, base_price (Normale), mega_price (Mega), ingredients)`
 
 ### Changing the Receipt Format
 
-The kitchen receipt is formatted in `printer/printer.py`. Edit the `format_receipt()` function to change what prints.
+Edit `printer/printer.py`.
 
-Example: To add a delivery time estimate, edit the receipt template.
+### Adding a New Page/Tab
 
----
-
-### Adding a New Order Status
-
-If you want to track "Completed", "Cancelled", etc., edit the `UPDATE orders SET status` queries in `db/database.py`.
-
----
-
-### Generating Monthly Reports (Future Feature)
-
-Use these database functions:
-
-```python
-from db.database import Database
-
-db = Database()
-
-# Get all orders from May 2026
-may_orders = db.get_monthly_orders(5, 2026)
-
-# Get total revenue for May
-may_revenue = db.get_monthly_revenue(5, 2026)
-
-# Get top 5 pizzas
-popular = db.get_popular_pizzas(limit=5)
-```
+1. Add a new page key to `page_keys` in `order_screen.py:_build_content_area()`
+2. Add the tab entry to `SECTION_TABS` in `order_screen.py`
+3. Create a new panel module in `ui/` and inject it into the page frame
 
 ---
 
 ## Running Tests
 
-To test the database without the UI:
-
 ```bash
 python db/database.py
 ```
 
-This runs the `if __name__ == '__main__'` block and:
-- Creates a test order
-- Fetches it back
-- Prints results
+This runs the `if __name__ == '__main__'` block, which creates a test multi-item order and prints results.
 
 ---
 
-## Building the Executable (.exe)
-
-When the app is ready for the reception PC:
+## Building the Executable
 
 ```bash
-# Install PyInstaller
 pip install pyinstaller
-
-# Create a single .exe file
 pyinstaller --onefile --windowed main.py
-
-# The .exe will be in: dist/main.exe
 ```
 
-Hand them `dist/main.exe` — they just double-click it. No Python installation needed.
+The executable will be in `dist/main.exe`.
 
 ---
 
@@ -349,31 +313,17 @@ Hand them `dist/main.exe` — they just double-click it. No Python installation 
 
 ### Database Backup
 
-The database file (`orders.db`) contains all order history. Back it up regularly:
-
 ```bash
-# Copy to USB or cloud storage
 cp db/orders.db backup_orders.db
 ```
 
----
-
 ### Printer Setup
 
-The app expects a **thermal receipt printer** that supports **ESC/POS** protocol.
-
-Common models:
-- Epson TM-T20
-- Star Micronics TSP100
-- Any generic ESC/POS thermal printer
-
-Configure the printer port in `printer/printer.py` (usually `COM3` or `LPT1`).
-
----
+The app expects a thermal receipt printer that supports ESC/POS protocol (e.g. Epson TM-T20, Star Micronics TSP100). Configure the port in `printer/printer.py`.
 
 ### Offline Operation
 
-The app works completely offline. No internet needed. Orders are stored locally and persist even if the PC restarts.
+The app works completely offline. No internet needed.
 
 ---
 
@@ -381,19 +331,14 @@ The app works completely offline. No internet needed. Orders are stored locally 
 
 ### Database is Corrupted
 
-Delete `db/orders.db`. The app will recreate it on the next run (you'll lose order history, so backup first).
+Delete `db/orders.db`. The app will recreate it on the next run.
 
 ### Printer Not Printing
 
-Check:
-1. Printer is turned on and connected
-2. Paper is loaded
-3. USB/LAN cable is connected
-4. Printer port in `printer.py` matches the actual port
+Check: printer is on, paper is loaded, cable is connected, port in `printer.py` is correct.
 
 ### App Crashes on Startup
 
-Check the error message. Common issues:
 - Missing dependency: `pip install -r requirements.txt`
 - Wrong Python version: Need Python 3.10+
 - Database locked: Close other instances of the app
@@ -402,26 +347,13 @@ Check the error message. Common issues:
 
 ## Future Enhancements
 
-Ideas for later versions:
-
-- ✓ Monthly revenue diagrams
-- ✓ Pizza popularity charts
-- ✓ Customer receipts (print to separate printer)
-- ✓ Discount codes
-- ✓ Table/delivery management
-- ✓ Staff login system
-- ✓ Network printing (multiple terminals)
-
----
-
-## Getting Help
-
-If something breaks:
-
-1. Check the error message
-2. Review the relevant file (listed in "How Each File Works")
-3. Check git history for recent changes
-4. Ask the team
+- 📈 Statistics & charts (monthly revenue, pizza popularity)
+- 🍕 Pizza manager (add/edit menu items from UI)
+- 🥗 Supplements manager
+- 📄 Customer receipts (print to separate printer)
+- 🏷️ Discount codes
+- 🪪 Staff login system
+- 🌐 Network printing (multiple terminals)
 
 ---
 
@@ -431,7 +363,4 @@ Internal project for **Skys Pizza**. Do not distribute.
 
 ---
 
-
----
-
-**Last Updated:** May 23, 2026
+**Last Updated:** May 28, 2026
